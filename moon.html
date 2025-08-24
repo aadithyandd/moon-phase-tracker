@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Moon Phase Tracker</title>
+  <style>
+    :root{
+      --bg:#0b1020; --card:#121a33; --muted:#9db3ff; --text:#e6ecff; --accent:#91a3ff; --accent2:#ffd48a;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Noto Sans",sans-serif;background:radial-gradient(1200px 800px at 70% -10%,#1a2552 0%,#0b1020 60%,#05070f 100%);color:var(--text);min-height:100vh;display:grid;place-items:center;padding:28px}
+    .app{width:min(980px,92vw);}
+    .card{background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.09);backdrop-filter: blur(8px);-webkit-backdrop-filter: blur(8px);border-radius:22px;box-shadow:0 10px 30px rgba(0,0,0,.35);}
+    header{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:18px 22px}
+    header h1{font-size:clamp(22px,3vw,30px);margin:0;letter-spacing:.5px}
+    header .meta{font-size:14px;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:1.2fr .8fr;gap:18px;padding:0 20px 22px}
+    @media (max-width:820px){.grid{grid-template-columns:1fr}}
+
+    .tile{padding:18px;border-radius:18px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}
+    .moonWrap{display:flex;gap:24px;align-items:center;}
+    canvas{background:#0b0f1f;border-radius:50%;box-shadow:inset 0 0 40px rgba(0,0,0,.6),0 12px 30px rgba(0,0,0,.25);}
+    .stats{display:grid;gap:8px}
+    .stat{font-size:15px;color:#c9d6ff}
+    .big{font-size:clamp(18px,2.6vw,22px);font-weight:600;color:var(--accent2)}
+
+    .controls{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
+    button{cursor:pointer;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);color:var(--text);padding:10px 14px;border-radius:12px;font-weight:600;letter-spacing:.3px}
+    button:hover{background:rgba(255,255,255,.12)}
+    input[type="date"]{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);color:var(--text);padding:10px 12px;border-radius:10px}
+
+    .list{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:6px}
+    .day{display:flex;gap:12px;align-items:center;padding:12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07)}
+    .day canvas{width:44px;height:44px}
+    .legend{font-size:12px;color:#a9b6ff;margin-top:8px}
+    footer{margin-top:16px;padding:12px 20px;font-size:13px;color:var(--muted)}
+    .badge{display:inline-block;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="app card">
+    <header>
+      <div>
+        <h1>🌙 Moon Phase Tracker</h1>
+        <div class="meta" id="todayMeta"></div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section class="tile">
+        <h2 style="margin-top:0;margin-bottom:12px">Today</h2>
+        <div class="moonWrap">
+          <canvas id="moon" width="220" height="220" aria-label="Moon rendering"></canvas>
+          <div class="stats">
+            <div class="big" id="phaseName">—</div>
+            <div class="stat" id="illum">Illumination: —%</div>
+            <div class="stat" id="age">Lunar age: — days</div>
+            <div class="stat" id="next">Next major phase: —</div>
+            <div class="controls">
+              <input type="date" id="datePicker" />
+              <button id="todayBtn">Today</button>
+              <button id="next7">Next 7 Days ▶</button>
+            </div>
+            <div class="legend">Tip: Pick any date to view its moon phase, then generate the next 7 days.</div>
+          </div>
+        </div>
+      </section>
+      <section class="tile">
+        <h2 style="margin-top:0;margin-bottom:8px">Next 7 Days</h2>
+        <div id="list" class="list"></div>
+      </section>
+    </div>
+
+    <footer>
+      Phases shown are computed locally using a well-known astronomical approximation (no external APIs). Images are drawn dynamically so they always match the selected date.
+    </footer>
+  </div>
+
+  <script>
+    const SYNODIC = 29.53058867; 
+    const EPOCH = Date.UTC(2000,0,6,18,14,0); 
+
+    function daysSinceEpoch(date){
+      return (Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) - EPOCH) / 86400000;
+    }
+
+    function normalize(x, mod){
+      return ((x % mod) + mod) % mod;
+    }
+
+    function phaseFor(date){
+      const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+      const days = daysSinceEpoch(d);
+      const age = normalize(days, SYNODIC); 
+      const frac = age / SYNODIC;           
+      const illum = (1 - Math.cos(2 * Math.PI * frac)) / 2; 
+      const name = phaseName(frac);
+      const nextMajor = nextMajorPhase(d, frac);
+      return {age, frac, illum, name, nextMajor};
+    }
+
+    function phaseName(frac){
+      const pct = frac * 100;
+      const names = [
+        {to: 1.0, label: "New Moon"},
+        {to: 6.25, label: "Waxing Crescent"},
+        {to: 18.75, label: "First Quarter"},
+        {to: 31.25, label: "Waxing Gibbous"},
+        {to: 56.25, label: "Full Moon"},
+        {to: 68.75, label: "Waning Gibbous"},
+        {to: 81.25, label: "Last Quarter"},
+        {to: 93.75, label: "Waning Crescent"},
+        {to: 100.1, label: "New Moon"}
+      ];
+      const cyclePct = frac * 100;
+      for (const n of names){ if (cyclePct <= n.to) return n.label; }
+      return "—";
+    }
+
+    function nextMajorPhase(date, frac){
+      const majors = [0, 0.25, 0.5, 0.75, 1];
+      let next = majors.find(m => m > frac);
+      if (next === undefined) next = 1; 
+      const daysUntil = Math.round((next - frac) * SYNODIC);
+      const target = new Date(date); target.setDate(target.getDate() + daysUntil);
+      const labels = {0:"New Moon",0.25:"First Quarter",0.5:"Full Moon",0.75:"Last Quarter",1:"New Moon"};
+      return `${labels[next]} in ${daysUntil} day${daysUntil!==1?'s':''} (${target.toDateString()})`;
+    }
+    function drawMoon(canvas, illum, waxing){
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height; const r = Math.min(w,h)/2 - 2; const cx = w/2, cy = h/2;
+      ctx.clearRect(0,0,w,h);
+      ctx.beginPath(); ctx.arc(cx,cy,r+6,0,Math.PI*2); ctx.fillStyle = '#0e1430'; ctx.fill();
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fillStyle = '#0a0d18'; ctx.fill();
+      const k = 2*illum-1; 
+      const dir = waxing ? 1 : -1;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
+      ctx.beginPath();
+      ctx.ellipse(cx + dir*k*r/2, cy, Math.abs(r*(1-Math.abs(k))), r, 0, 0, Math.PI*2);
+      ctx.fillStyle = '#f9f2d4';
+      ctx.fill();
+      ctx.restore();
+      ctx.globalAlpha = .12; ctx.beginPath(); ctx.arc(cx-10,cy-14,r*.8,0,Math.PI*2); ctx.fillStyle='#ffffff'; ctx.fill(); ctx.globalAlpha=1;
+    }
+
+    function render(date){
+      const info = phaseFor(date);
+      document.getElementById('phaseName').textContent = info.name;
+      document.getElementById('illum').textContent = `Illumination: ${(info.illum*100).toFixed(1)}%`;
+      document.getElementById('age').textContent = `Lunar age: ${info.age.toFixed(1)} days / ${SYNODIC.toFixed(2)} days`;
+      document.getElementById('next').textContent = info.nextMajor;
+      const waxing = info.frac <= 0.5;
+      drawMoon(document.getElementById('moon'), info.illum, waxing);
+    }
+
+    function listNext7(start){
+      const container = document.getElementById('list');
+      container.innerHTML = '';
+      for(let i=1;i<=7;i++){
+        const d = new Date(start); d.setDate(d.getDate()+i);
+        const inf = phaseFor(d);
+        const row = document.createElement('div'); row.className='day';
+        const c = document.createElement('canvas'); c.width=44; c.height=44; row.appendChild(c);
+        drawMoon(c, inf.illum, inf.frac<=0.5);
+        const txt = document.createElement('div');
+        txt.innerHTML = `<div style="font-weight:600">${d.toDateString()}</div><div style="font-size:13px;color:#c9d6ff">${inf.name} • ${(inf.illum*100).toFixed(0)}%</div>`;
+        row.appendChild(txt);
+        container.appendChild(row);
+      }
+    }
+    const today = new Date();
+    document.getElementById('todayMeta').textContent = today.toDateString();
+    const picker = document.getElementById('datePicker');
+    picker.valueAsDate = today;
+
+    function current(){ return picker.valueAsDate || new Date(picker.value); }
+
+    function refresh(){ render(current()); }
+
+    document.getElementById('todayBtn').addEventListener('click', ()=>{ picker.valueAsDate = new Date(); refresh(); });
+    document.getElementById('next7').addEventListener('click', ()=>{ listNext7(current()); });
+    picker.addEventListener('change', refresh);
+
+    refresh();
+    listNext7(today);
+  </script>
+</body>
+</html>
